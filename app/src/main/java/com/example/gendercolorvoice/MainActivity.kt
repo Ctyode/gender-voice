@@ -133,13 +133,9 @@ class MainActivity : ComponentActivity() {
             setPadding(24, 24, 24, 24)
             gravity = Gravity.CENTER_VERTICAL
         }
-        val btnRecord = Button(this).apply { text = "Record" }
-        val btnPlay = Button(this).apply { text = "Play" }
         val btnReset = Button(this).apply { text = "Reset" }
         val btnShare = Button(this).apply { text = "Share log" }
         val status = TextView(this).apply { text = "" }
-        controls.addView(btnRecord)
-        controls.addView(btnPlay)
         controls.addView(btnReset)
         controls.addView(btnShare)
         controls.addView(status)
@@ -160,6 +156,28 @@ class MainActivity : ComponentActivity() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ))
         bottomBar.addView(debugText, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        // Noise reduction bar at the very bottom of the panel
+        val nrBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(24, 8, 24, 16)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val nrLabel = TextView(this).apply { text = "NR" }
+        val nrValue = TextView(this).apply { text = "30%" }
+        val nrStatus = TextView(this).apply { text = "inactive" }
+        val nrSlider = android.widget.SeekBar(this).apply {
+            max = 100
+            progress = 30
+        }
+        // Make slider take remaining width
+        nrBar.addView(nrLabel)
+        nrBar.addView(nrSlider, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        nrBar.addView(nrValue)
+        nrBar.addView(nrStatus)
+        bottomBar.addView(nrBar, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ))
@@ -452,8 +470,26 @@ class MainActivity : ComponentActivity() {
             },
             onFrame = { x, n, f0, conf, f1, f2, f3, res01 ->
                 windowAnalyzer?.addFrame(x, n, f0, conf, f1, f2, f3, res01)
+            },
+            onActiveChange = { active ->
+                runOnUiThread { nrStatus.text = if (active) "active" else "inactive" }
             }
         )
+        // Initial noise reduction from slider
+        fun updateNr(progress: Int) {
+            val lvl = (progress / 100f).coerceIn(0f,1f)
+            // Show percent; higher means сильнее шумоподавление и выше порог
+            nrValue.text = progress.toString() + "%"
+            mic.setNoiseReduction(lvl)
+        }
+        updateNr(nrSlider.progress)
+        nrSlider.setOnSeekBarChangeListener(object: android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                updateNr(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
         windowAnalyzer = FeatureWindowAnalyzer(sampleRate = 44100, onWindow = { wf ->
             // Update compact summary in debug panel
             dbgStatsExtra = "ΔF=${wf.deltaF.toInt()}Hz, VTL=${String.format("%.1f", wf.vtlDeltaF)}cm, PR=${String.format("%.1f", wf.prosodyRangeSt)}st, SC=${wf.scHz.toInt()}Hz | L:${wf.decision.lowF0Count}/7 ${if (wf.decision.lowF0Hit) "✓" else ""} H:${wf.decision.highF0Count}/7 ${if (wf.decision.highF0Hit) "✓" else ""}"
@@ -498,60 +534,8 @@ class MainActivity : ComponentActivity() {
             windowLog.add(wf)
         }, cfg = cfg)
 
-        // Button handlers
-        btnRecord.setOnClickListener {
-            if (!recorder.recording()) {
-                recorder.start()
-                dbgStats = null
-                dbgDebug = null
-                dbgStatsExtra = null
-                dbgLive = null
-                refreshDebugPanel()
-                status.text = "Recording…"
-                btnRecord.text = "Stop"
-                windowLog.clear()
-            } else {
-                val seq = recorder.stop()
-                val st = recorder.computeStats(seq)
-                dbgStats = st
-                refreshDebugPanel()
-                status.text = "Recorded ${seq.size} pts"
-                btnRecord.text = "Record"
-                // Build debug ranges from windowLog
-                if (windowLog.isNotEmpty()) {
-                    val f0all = windowLog.flatMap { it.f0Valid }
-                    fun Float.format1() = String.format("%.1f", this)
-                    fun Float.format0() = String.format("%d", this.toInt())
-                    val lines = mutableListOf<String>()
-                    if (f0all.isNotEmpty()) lines += "F0: ${ (f0all.minOrNull()?:0f).format0()}..${(f0all.maxOrNull()?:0f).format0()} Hz"
-                    lines += "F1: ${windowLog.minOf { it.f1 }.format0()}..${windowLog.maxOf { it.f1 }.format0()} Hz"
-                    lines += "F2: ${windowLog.minOf { it.f2 }.format0()}..${windowLog.maxOf { it.f2 }.format0()} Hz"
-                    lines += "F3: ${windowLog.minOf { it.f3 }.format0()}..${windowLog.maxOf { it.f3 }.format0()} Hz"
-                    lines += "ΔF: ${windowLog.minOf { it.deltaF }.format0()}..${windowLog.maxOf { it.deltaF }.format0()} Hz"
-                    lines += "VTL: ${windowLog.minOf { it.vtlDeltaF }.format1()}..${windowLog.maxOf { it.vtlDeltaF }.format1()} cm"
-                    lines += "EHF/LF: ${windowLog.minOf { it.ehfOverElf }.format1()}..${windowLog.maxOf { it.ehfOverElf }.format1()}"
-                    lines += "SC: ${windowLog.minOf { it.scHz }.format0()}..${windowLog.maxOf { it.scHz }.format0()} Hz"
-                    lines += "PR: ${windowLog.minOf { it.prosodyRangeSt }.format1()}..${windowLog.maxOf { it.prosodyRangeSt }.format1()} st"
-                    lines += "L-rule count: ${windowLog.minOf { it.decision.lowF0Count }}..${windowLog.maxOf { it.decision.lowF0Count }}"
-                    lines += "H-rule count: ${windowLog.minOf { it.decision.highF0Count }}..${windowLog.maxOf { it.decision.highF0Count }}"
-                    dbgDebug = lines
-                    refreshDebugPanel()
-                }
-            }
-        }
-        btnPlay.setOnClickListener {
-            val seq = recorder.last()
-            if (seq.isEmpty()) { status.text = "No data"; return@setOnClickListener }
-            dbgStats = recorder.computeStats(seq)
-            refreshDebugPanel()
-            status.text = "Playing…"
-            recorder.play(seq, fieldView) {
-                status.text = "Done"
-            }
-        }
-
+        // Button handlers: Reset & Share log only
         btnReset.setOnClickListener {
-            // Clear trail and on-screen stats; keep audio state
             fieldView.clearTrail()
             dbgStats = null
             dbgDebug = null
@@ -564,7 +548,6 @@ class MainActivity : ComponentActivity() {
         }
 
         btnShare.setOnClickListener {
-            // Ensure file exists; fallback to latest from logs dir
             logger.flush()
             val f = logger.currentFile() ?: logger.latestExisting()
             if (f == null || !f.exists()) { status.text = "No log yet"; return@setOnClickListener }

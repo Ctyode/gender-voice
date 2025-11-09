@@ -14,11 +14,17 @@ class MicAnalyzer(
     private val context: Context,
     private val sampleRate: Int = 44100,
     private val onResult: (f0Hz: Float, resonance01: Float, confidence: Float) -> Unit,
-    private val onFrame: ((x: FloatArray, n: Int, f0: Float, conf: Float, f1: Float, f2: Float, f3: Float, res01: Float) -> Unit)? = null
+    private val onFrame: ((x: FloatArray, n: Int, f0: Float, conf: Float, f1: Float, f2: Float, f3: Float, res01: Float) -> Unit)? = null,
+    private val onActiveChange: ((active: Boolean) -> Unit)? = null
 ) {
     private var audioRecord: AudioRecord? = null
     private var thread: Thread? = null
     @Volatile private var running = false
+    @Volatile private var noiseLevel01: Float = 0.3f // 0..1, controls gate strength
+
+    fun setNoiseReduction(level01: Float) {
+        noiseLevel01 = level01.coerceIn(0f, 1f)
+    }
 
     fun start() {
         if (running) return
@@ -61,6 +67,7 @@ class MicAnalyzer(
         val emaF0 = Ema(0.15f)
         val emaRes = Ema(0.15f)
         val noiseEma = Ema(0.05f)
+        var lastActive = false
 
         while (running) {
             val ar = audioRecord ?: break
@@ -78,16 +85,19 @@ class MicAnalyzer(
             val (f0, conf) = detectPitch(floatBuf, n, sampleRate)
 
             // Adaptive noise gate + voiced check (less strict)
-            if (conf < 0.45f) { noiseEma.update(rms); continue }
+            if (conf < 0.45f) { noiseEma.update(rms); onActiveChange?.invoke(false); lastActive = false; continue }
             val baseline = noiseEma.value().takeIf { it > 0f } ?: (rms * 0.4f)
-            val gate = baseline * 1.4f
-            if (rms < gate) continue
+            // Gate factor increases with noiseLevel01; 0 -> ~1.2x, 1 -> ~3.2x
+            val gateFactor = 1.2f + 2.0f * noiseLevel01
+            val gate = baseline * gateFactor
+            if (rms < gate) { if (lastActive) { onActiveChange?.invoke(false); lastActive = false }; continue }
 
             val resAll = resonance.estimateAll(floatBuf, n, sampleRate, f0)
             val res01 = resAll.resonance01
             if (f0 > 0) {
                 val f0s = emaF0.update(f0)
                 val ress = emaRes.update(res01)
+                if (!lastActive) { onActiveChange?.invoke(true); lastActive = true }
                 onResult(f0s, ress, conf)
                 onFrame?.invoke(floatBuf.copyOf(n), n, f0s, conf, resAll.f1, resAll.f2, resAll.f3, ress)
             }
