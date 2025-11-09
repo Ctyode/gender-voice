@@ -15,4 +15,11 @@ Extras
 - Bottom bar shows debug stats and two buttons: Reset and Share log.
 - Noise Reduction slider (NR) at the very bottom:
   - 0–100% controls how aggressively background noise is ignored.
-  - “active” means the pointer is moving (signal above the threshold), “inactive” — frozen (below threshold).
+- “active” means the pointer is moving (signal above the threshold), “inactive” — frozen (below threshold).
+
+Preview
+- Background scheme used in the app:
+
+<p align="center">
+  <img src="app/src/main/assets/Scheme2.svg" alt="Resonance/Pitch scheme" width="380" />
+</p>
