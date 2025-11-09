@@ -23,3 +23,6 @@ Preview
 <p align="center">
   <img src="app/src/main/assets/Scheme2.svg" alt="Resonance/Pitch scheme" width="380" />
 </p>
+
+Download:
+https://github.com/Ctyode/gender-voice/releases/tag/apk
