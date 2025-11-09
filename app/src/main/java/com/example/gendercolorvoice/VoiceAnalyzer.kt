@@ -70,6 +70,7 @@ class VoiceAnalyzer(private val context: Context, private val cfg: AppConfig = A
         require(sr > 0 && mono.isNotEmpty()) { "Unsupported or empty WAV: $audioPath" }
 
         val analyzerFrames = mutableListOf<WindowFeatures>()
+        @Suppress("UNUSED_VARIABLE")
         val windowSamples = (sr.toLong() * windowMs / 1000L).toInt()
         val hopSamples = (sr.toLong() * hopMs / 1000L).toInt().coerceAtLeast(1)
         val resonance = ResonanceEstimator(context)
@@ -175,7 +176,7 @@ class VoiceAnalyzer(private val context: Context, private val cfg: AppConfig = A
         var dataLen = 0
         var sr = 0
         var ch = 1
-        var bits = 16
+        var bits: Int
         while (off + 8 <= bytes.size) {
             val tag = bb.getInt(off); val len = bb.getInt(off + 4); val next = off + 8 + len
             if (tag == 0x20746d66) { // 'fmt '
@@ -252,4 +253,3 @@ private fun List<Float>.median(): Float {
 }
 
 private fun Float.ifNaN(v: Float): Float = if (this.isNaN()) v else this
-

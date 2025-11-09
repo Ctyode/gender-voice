@@ -1,0 +1,87 @@
+{
+  "dataset": "voice.csv (data-driven)",
+  "rows": 3168,
+  "target": "label",
+  "axes": {
+    "pitch_feature": "meanfun",
+    "resonance": {
+      "method": "PCA(1) on spectral)",
+      "spec_features_used": [
+        "sd",
+        "Q25",
+        "Q75",
+        "IQR",
+        "skew",
+        "kurt",
+        "sp.ent",
+        "sfm",
+        "meandom",
+        "mindom",
+        "maxdom",
+        "dfrange",
+        "modindx"
+      ]
+    },
+    "normalization": "ECDF percent-rank to [0,1]"
+  },
+  "class_means_norm": {
+    "female": {
+      "x_reson": 0.6349051815089998,
+      "y_pitch": 0.7426493556581912
+    },
+    "male": {
+      "x_reson": 0.3650952169215028,
+      "y_pitch": 0.2573510427723113
+    }
+  },
+  "class_spans_norm": {
+    "female": {
+      "x_reson_p16_p84": [
+        0.26987693278636793,
+        0.9188135058378037
+      ],
+      "y_pitch_p16_p84": [
+        0.5747175765225623,
+        0.9197601767118965
+      ]
+    },
+    "male": {
+      "x_reson_p16_p84": [
+        0.1354622909435153,
+        0.5953676238561061
+      ],
+      "y_pitch_p16_p84": [
+        0.0815020511202272,
+        0.4278068791416851
+      ]
+    }
+  },
+  "svg": {
+    "viewBox": {
+      "x0": 0.0,
+      "y0": 0.0,
+      "w": 552.0,
+      "h": 552.0,
+      "center": {
+        "cx": 276.0,
+        "cy": 276.0
+      }
+    },
+    "points": {
+      "female_avg": {
+        "x_norm": 0.6349051815089998,
+        "y_norm": 0.7426493556581912,
+        "x": 350.46766019296786,
+        "y": 142.05755567667845,
+        "r": 137.16912590722626
+      },
+      "male_avg": {
+        "x_norm": 0.3650952169215028,
+        "y_norm": 0.2573510427723113,
+        "x": 201.53255974066957,
+        "y": 409.94222438968416,
+        "r": 111.25700220889871
+      }
+    }
+  }
+}

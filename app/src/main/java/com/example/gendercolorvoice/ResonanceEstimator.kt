@@ -89,7 +89,7 @@ class ResonanceEstimator(private val context: Context) {
         val fMax = 5000f
         val nfft = 2048
         val spec = DoubleArray(nfft / 2)
-        var bestPeaks = mutableListOf<Pair<Int, Double>>()
+        // peak list collected on the fly; no separate container needed
         for (k in 1 until nfft / 2) {
             val w = 2.0 * Math.PI * k / nfft
             var denomRe = 1.0
@@ -126,7 +126,8 @@ class ResonanceEstimator(private val context: Context) {
             for ((idx, hz) in candidates) {
                 if (hz < lo || hz > hi || used.contains(idx)) continue
                 val v = spec[idx]
-                if (best == null || v > best!!.second) best = idx to v
+                val bestVal = best?.second ?: Double.NEGATIVE_INFINITY
+                if (v > bestVal) best = idx to v
             }
             return best?.let { used.add(it.first); it.first * hzPerBin }
         }

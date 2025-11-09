@@ -18,6 +18,9 @@ data class WindowFeatures(
     val h1MinusH2: Float,
     val ehfOverElf: Float,
     val scHz: Float,
+    // Added live spectral descriptors to support LR coefficients
+    val sfm: Float? = null,           // spectral flatness measure [0..1]
+    val spEnt: Float? = null,         // spectral entropy [0..1]
     val prosodyRangeSt: Float,
     val avgPitch01: Float,
     val avgRes01: Float,
@@ -110,15 +113,32 @@ class FeatureWindowAnalyzer(
         var eHF = 0.0
         var num = 0.0
         var den = 0.0
+        var geoLogSum = 0.0
         for (k in 1..scMaxBin) {
             val p = sumPsd[k].toDouble()
             val f = k * hzPerBin
             if (k <= splitBin) eLF += p else eHF += p
             num += f * p
             den += p
+            geoLogSum += kotlin.math.ln(p.coerceAtLeast(1e-20))
         }
         val ehfelf = if (eLF > 1e-12) (eHF / eLF).toFloat() else Float.POSITIVE_INFINITY
         val sc = if (den > 0) (num / den).toFloat() else 0f
+
+        // Spectral entropy (normalized) and spectral flatness
+        val bins = (scMaxBin - 1).coerceAtLeast(1)
+        val spEnt = if (den > 0) {
+            var H = 0.0
+            for (k in 1..scMaxBin) {
+                val pk = (sumPsd[k] / den).toDouble()
+                if (pk > 0.0) H -= pk * kotlin.math.ln(pk)
+            }
+            val Hmax = kotlin.math.ln(bins.toDouble())
+            (H / Hmax).toFloat().coerceIn(0f,1f)
+        } else 0f
+        val arith = (den / bins).coerceAtLeast(1e-20)
+        val geom = kotlin.math.exp(geoLogSum / bins)
+        val sfm = (geom / arith).toFloat().coerceIn(0f,1f)
 
         // H1-H2 from spectrum
         val f0 = if (f0Track.isNotEmpty()) f0Track.median() else 0f
@@ -184,7 +204,9 @@ class FeatureWindowAnalyzer(
             WindowFeatures(
                 f0Track.toList(), f1m, f2m, f3m,
                 deltaF, vtlDeltaF, vtlFm,
-                h1h2, ehfelf, sc, pr,
+                h1h2, ehfelf, sc,
+                sfm, spEnt,
+                pr,
                 avgPitch01, avgRes01,
                 null, null,
                 decision

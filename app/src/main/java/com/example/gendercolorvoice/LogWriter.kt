@@ -18,7 +18,7 @@ class LogWriter(private val context: Context) {
             val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
             val f = File(dir, "$prefix-$ts.csv")
             fw = FileWriter(f, false)
-            fw?.appendLine("t,pitch_hz,resonance01,x01,y01,px,py,chart_l,chart_t,chart_w,chart_h,view_w,view_h,b_hf,b_sc,b_vtl,b_df,b_h12,R")
+            fw?.appendLine("t,pitch_hz,resonance01,x01,y01,px,py,chart_l,chart_t,chart_w,chart_h,view_w,view_h,x_lr,g_lr,b_hf,b_sc,b_vtl,b_df,b_h12,R")
             fw?.flush()
             file = f
         } catch (_: Throwable) { file = null; fw = null }
@@ -39,6 +39,8 @@ class LogWriter(private val context: Context) {
         chartH: Float,
         vw: Int,
         vh: Int,
+        xLR: Float? = null,
+        gLR: Float? = null,
         bHf: Float? = null,
         bSc: Float? = null,
         bVtl: Float? = null,
@@ -48,7 +50,7 @@ class LogWriter(private val context: Context) {
     ) {
         try {
             fw?.apply {
-                appendLine("$t,${pitchHz ?: ""},${resonance01 ?: ""},$x01,$y01,$px,$py,$chartL,$chartT,$chartW,$chartH,$vw,$vh,${bHf ?: ""},${bSc ?: ""},${bVtl ?: ""},${bDf ?: ""},${bH12 ?: ""},${r ?: ""}")
+                appendLine("$t,${pitchHz ?: ""},${resonance01 ?: ""},$x01,$y01,$px,$py,$chartL,$chartT,$chartW,$chartH,$vw,$vh,${xLR ?: ""},${gLR ?: ""},${bHf ?: ""},${bSc ?: ""},${bVtl ?: ""},${bDf ?: ""},${bH12 ?: ""},${r ?: ""}")
                 flush()
             }
         } catch (_: Throwable) {}

@@ -28,13 +28,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var cfg: AppConfig
     private val recentClasses = ArrayDeque<String>()
     private var svgMapping: SvgMappingInfo? = null
-    private var voiceStats: VoiceStats? = null
+    // voiceStats removed: no dependency on voice.json
     private val recentBrightness = ArrayDeque<Float>()
     // Debug panel state
     private var dbgStats: PlaybackStats? = null
     private var dbgStatsExtra: String? = null
     private var dbgLive: List<String>? = null
     private var dbgDebug: List<String>? = null
+    private var lastLrX: Float? = null
+    private var lastLrG: Float? = null
     private fun pushBrightness(v: Float) {
         recentBrightness.addLast(v)
         while (recentBrightness.size > 20) recentBrightness.removeFirst()
@@ -184,18 +186,7 @@ class MainActivity : ComponentActivity() {
         }
         // Override pitch normalization if provided by mapping (explicit 80–300 Hz)
         svgMapping?.pitchRange?.let { pr -> PitchToGender.setRange(pr.minHz, pr.maxHz) }
-        // Load curated dataset stats (voice.json) — highest priority
-        voiceStats = VoiceStats.load(this)
-        voiceStats?.let { vs ->
-            // Robust range from pooled groups: [min(mean-2σ), max(mean+2σ)]
-            val lo = listOf(vs.female.meanfunHz - 2f*vs.female.stdMeanfunHz, vs.male.meanfunHz - 2f*vs.male.stdMeanfunHz).minOrNull() ?: 80f
-            val hi = listOf(vs.female.meanfunHz + 2f*vs.female.stdMeanfunHz, vs.male.meanfunHz + 2f*vs.male.stdMeanfunHz).maxOrNull() ?: 300f
-            val minHz = lo.coerceIn(40f, 200f)
-            val maxHz = hi.coerceIn(220f, 500f).coerceAtLeast(minHz + 40f)
-            PitchToGender.setRange(minHz, maxHz)
-        }
-        // Optionally refine pitch range from a dataset (voice.csv) if present — lower priority than voice.json
-        if (voiceStats == null) trySetPitchRangeFromVoiceCsv()
+        // No voice.json/voice.csv usage: LR coefficients-only pipeline
         logger.start()
 
         mic = MicAnalyzer(
@@ -204,13 +195,6 @@ class MainActivity : ComponentActivity() {
                 val pitch01 = PitchToGender.scoreFromF0(f0Hz)
                 val bm = if (cfg.resAxis?.useBrightnessForX == true && latestWindow != null) {
                     val base = cfg.resAxis!!
-                    val dyn = cfg.score?.let { sc ->
-                        val so = try { // bias_dynamic may be optional
-                            val cls = sc::class
-                            null
-                        } catch (_: Throwable) { null }
-                        null
-                    }
                     // Scale VTL/ΔF weights for low F0 guard if configured
                     val resCfg = run {
                         val bd = try {
@@ -237,6 +221,61 @@ class MainActivity : ComponentActivity() {
                     BrightnessMapper.computeX01(resCfg, latestWindow!!)
                 } else null
                 val xFromBrightness = bm?.first
+                // LR-based X from live features using Kaggle coefficients (if available)
+                // Prefer LR computed on window callback to avoid race conditions
+                var lrX = lastLrX
+                var lrG = lastLrG
+                if (lrX == null && latestWindow != null) {
+                    try {
+                        val coeffs = KaggleCoefficients.load(this)
+                        val r = KaggleLiveScorer.scoreToX(this, coeffs, latestWindow!!, cfg.resAxis)
+                        lrX = r.x01; lrG = r.g
+                        lastLrX = lrX; lastLrG = lrG
+                    } catch (_: Throwable) {}
+                }
+                // Optional LR calibration from config: x' = 0.5 + scale*(x-0.5) + bias, then clamp01
+                fun lrCalibrate(x: Float?): Float? {
+                    if (x == null) return null
+                    return try {
+                        val cfgRoot1 = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                        val sc = cfgRoot1.optJSONObject("score")
+                        val calib = sc?.optJSONObject("lr_calib")
+                        val scale = calib?.optDouble("scale", 1.0)?.toFloat() ?: 1f
+                        val bias = calib?.optDouble("bias", 0.0)?.toFloat() ?: 0f
+                        (0.5f + scale * (x - 0.5f) + bias).coerceIn(0f,1f)
+                    } catch (_: Throwable) { x.coerceIn(0f,1f) }
+                }
+                var xFromLR = lrCalibrate(lrX)
+                // Apply class-direction inversion even when not mapping to anchors
+                try {
+                    if (xFromLR != null) {
+                        val cfgRootDir = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                        val sc = cfgRootDir.optJSONObject("score")
+                        val predicts = sc?.optString("lr_predicts", "female") ?: "female"
+                        if (predicts.equals("male", ignoreCase = true)) {
+                            xFromLR = (1f - xFromLR!!).coerceIn(0f,1f)
+                        }
+                    }
+                } catch (_: Throwable) {}
+                // Optionally map LR probability onto [maleX..femaleX] anchors; can be disabled via score.map_lr_to_anchors=false
+                try {
+                    val cfgRoot2 = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                    val sc = cfgRoot2.optJSONObject("score")
+                    val mapAnchors = sc?.optBoolean("map_lr_to_anchors", true) ?: true
+                    if (mapAnchors) {
+                        val vm = VoiceMapCfg.load(this)
+                        if (vm != null && xFromLR != null) {
+                            val predicts = sc?.optString("lr_predicts", "female") ?: "female"
+                            val prob = if (predicts.equals("male", ignoreCase = true)) (1f - xFromLR) else xFromLR
+                            val span = (vm.femaleX - vm.maleX)
+                            xFromLR = (vm.maleX + prob * span).coerceIn(0f,1f)
+                            dbgDebug = listOf(
+                                "LR x=${lrX?.let { fmt2(it) } ?: "-"} g=${lrG?.let { fmt2(it) } ?: "-"}",
+                                "anchors maleX=${fmt2(vm.maleX)} femaleX=${fmt2(vm.femaleX)}"
+                            )
+                        }
+                    }
+                } catch (_: Throwable) {}
                 if (xFromBrightness != null) pushBrightness(xFromBrightness)
                 val stdB = brightnessStd()
                 // Adaptive blend: if brightness varies too little, lean on resonance01 more
@@ -248,6 +287,27 @@ class MainActivity : ComponentActivity() {
                     else -> 0.7f
                 }
                 var x01 = if (xFromBrightness != null) (alpha * xFromBrightness + (1 - alpha) * resonance01) else resonance01
+                // Blend in LR-driven X as a bias towards male/female averages along resonance axis
+                xFromLR?.let { xl ->
+                    // Blend factor; prefer LR stronger to affect X noticeably
+                    val beta = try {
+                        val cfgRoot3 = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                        val sc = cfgRoot3.optJSONObject("score")
+                        sc?.optDouble("lr_blend", 0.7)?.toFloat() ?: 0.7f
+                    } catch (_: Throwable) { 0.7f }
+                    x01 = if (xFromBrightness == null) xl else (beta * xl + (1 - beta) * x01)
+                }
+                // Optional: force LR as sole X if configured
+                try {
+                    val cfgRootOnly = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                    val sc = cfgRootOnly.optJSONObject("score")
+                    // Important: when forcing LR-only, use the corrected, anchor-mapped value if available
+                    // so that lr_predicts and voice_map anchors are respected. Fallback to raw lrX.
+                    if (sc?.optBoolean("use_lr_only", false) == true) {
+                        val sole = xFromLR ?: lrX
+                        if (sole != null) x01 = sole
+                    }
+                } catch (_: Throwable) {}
                 // Apply global X gain from config (x' = 0.5 + gain*(x-0.5))
                 cfg.resAxis?.let { rx ->
                     val g = rx.gainX
@@ -257,8 +317,8 @@ class MainActivity : ComponentActivity() {
                 }
                 // Bias dynamic: advanced formula
                 try {
-                    val root = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
-                    val score = root.optJSONObject("score")
+                    val cfgRoot4 = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                    val score = cfgRoot4.optJSONObject("score")
                     val bd = score?.optJSONObject("bias_dynamic")
                     if (bd != null && bd.optBoolean("enabled", false)) {
                         val params = bd.optJSONObject("params")
@@ -305,8 +365,8 @@ class MainActivity : ComponentActivity() {
                 } catch (_: Throwable) {}
                 // Hard floor: ensure minimum X when all conditions met
                 try {
-                    val root = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
-                    val rx = root.optJSONObject("resonance_axis")
+                    val cfgRoot5 = org.json.JSONObject(this.assets.open("config.json").bufferedReader().use { it.readText() })
+                    val rx = cfgRoot5.optJSONObject("resonance_axis")
                     val hf = rx?.optJSONObject("hard_floor")
                     if (hf != null && hf.optBoolean("enabled", false)) {
                         val rules = hf.optJSONArray("x_min_when")
@@ -346,6 +406,16 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 } catch (_: Throwable) {}
+                // Update debug lines for LR
+                try {
+                    val lw = latestWindow
+                    val f0k = if (lw != null && lw.f0Valid.isNotEmpty()) (lw.f0Valid.average().toFloat() / 1000f) else Float.NaN
+                    val scK = lw?.let { it.scHz / 1000f } ?: Float.NaN
+                    dbgDebug = listOf(
+                        "LR x=${lrX?.let { fmt2(it) } ?: "-"} g=${lrG?.let { fmt2(it) } ?: "-"}",
+                        "meanfun≈${if (f0k.isNaN()) "-" else fmt2(f0k)} kHz, centroid≈${if (scK.isNaN()) "-" else fmt2(scK)} kHz"
+                    )
+                } catch (_: Throwable) { }
                 runOnUiThread {
                     fieldView.setPoint(x01, pitch01)
                     // Logging with mapped pixels and chart rect
@@ -366,6 +436,8 @@ class MainActivity : ComponentActivity() {
                         chartH = r.height(),
                         vw = fieldView.width,
                         vh = fieldView.height,
+                        xLR = lrX,
+                        gLR = lrG,
                         bHf = bm?.second?.bHf,
                         bSc = bm?.second?.bSc,
                         bVtl = bm?.second?.bVtl,
@@ -406,6 +478,20 @@ class MainActivity : ComponentActivity() {
                     "F1=${wf.f1.toInt()} F2=${wf.f2.toInt()} F3=${wf.f3.toInt()} Hz",
                     "EHF/LF=${String.format("%.2f", wf.ehfOverElf)} H1-H2=${String.format("%.1f", wf.h1MinusH2)} dB"
                 )
+            }
+            // Compute LR here to ensure we always have a window
+            try {
+                val coeffs = KaggleCoefficients.load(this)
+                val r = KaggleLiveScorer.scoreToX(this, coeffs, wf, cfg.resAxis)
+                lastLrX = r.x01
+                lastLrG = r.g
+                dbgDebug = listOf(
+                    "LR x=${lastLrX?.let { fmt2(it) } ?: "-"} g=${lastLrG?.let { fmt2(it) } ?: "-"}",
+                    "meanfun≈${String.format("%.2f", (wf.f0Valid.average().toFloat()/1000f))} kHz, centroid≈${String.format("%.2f", (wf.scHz/1000f))} kHz"
+                )
+            } catch (e: Throwable) {
+                lastLrX = null; lastLrG = null
+                dbgDebug = listOf("LR error: ${'$'}{e.message}")
             }
             refreshDebugPanel()
             latestWindow = wf

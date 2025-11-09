@@ -1,5 +1,5 @@
 {
-  "svg_space": { "width": 552, "height": 551 },
+  "svg_space": { "width": 552, "height": 552 },
   "map": {
     "x_from_G": { "clip": 0.35, "formula": "x = (G + clip)/(2*clip)" },
     "px_from_norm": { "Xpx": "552*x", "Ypx": "551*(1-y)" }

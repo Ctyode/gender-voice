@@ -126,7 +126,7 @@ class GradientFieldView(context: Context) : View(context) {
                 val vw = width.toFloat(); val vh = height.toFloat()
                 // Match WebView: it fits the WHOLE SVG (viewBox) with contain
                 val scale = kotlin.math.min(vw / m.svgW, vh / m.svgH)
-                val dispW = m.svgW * scale; val dispH = m.svgH * scale
+                val dispW = m.svgW * scale
                 val imgLeft = (vw - dispW) / 2f
                 val imgTop = 0f // object-position: center top in WebView
                 // Our gradient canvas is an inner rect at (canvasX,canvasY) inside the SVG
@@ -154,8 +154,8 @@ class GradientFieldView(context: Context) : View(context) {
                     val baseColor = 0xFFFFD700.toInt()
                     val alpha = (255 * (0.35f + 0.65f * (1f - age))).toInt().coerceIn(64, 255)
                     trailPaint.color = (alpha shl 24) or (baseColor and 0x00FFFFFF)
-                    val x1 = chartRect.left + (prev!!.first * chartRect.width())
-                    val y1 = chartRect.top + (prev!!.second * chartRect.height())
+                    val x1 = chartRect.left + (prev.first * chartRect.width())
+                    val y1 = chartRect.top + (prev.second * chartRect.height())
                     val x2 = chartRect.left + (p.first * chartRect.width())
                     val y2 = chartRect.top + (p.second * chartRect.height())
                     canvas.drawLine(x1, y1, x2, y2, trailPaint)
